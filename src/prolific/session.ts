@@ -17,6 +17,20 @@ const EMAIL_SELECTORS = [
   "input[type='text']",
 ];
 
+const LOGIN_STATE_SELECTORS = [
+  "input[type='email']",
+  "input[name='username']",
+  "input[name='identifier']",
+  "input[name='email']",
+  "input[id*='username']",
+  "input[id*='email']",
+  "input[autocomplete='username']",
+  "input[type='password']",
+  "input[name='password']",
+  "input[id*='password']",
+  "input[autocomplete='current-password']",
+];
+
 const PASSWORD_SELECTORS = [
   "input[type='password']",
   "input[name='password']",
@@ -252,12 +266,23 @@ export class ProlificSessionManager {
   }
 
   private async isLoggedOut(page: Page): Promise<boolean> {
-    const url = page.url().toLowerCase();
-    if (url.includes("/login")) {
+    const rawUrl = page.url();
+    const url = rawUrl.toLowerCase();
+
+    if (url.includes("/login") || url.includes("/u/login")) {
       return true;
     }
 
-    for (const selector of [...EMAIL_SELECTORS, ...PASSWORD_SELECTORS]) {
+    try {
+      const host = new URL(rawUrl).hostname.toLowerCase();
+      if (host === "auth.prolific.com") {
+        return true;
+      }
+    } catch {
+      // Ignore malformed transient URLs and continue with DOM heuristics.
+    }
+
+    for (const selector of LOGIN_STATE_SELECTORS) {
       const count = await page.locator(selector).count();
       if (count > 0) {
         return true;
