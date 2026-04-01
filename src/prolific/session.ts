@@ -59,6 +59,7 @@ const PRE_LOGIN_CONTINUE_SELECTORS = [
 
 const BLOCK_TEXT_PATTERN =
   /captcha|verify you are human|human verification|security check|challenge|checking your browser|just a moment|cloudflare|attention required|enable javascript and cookies|access denied|browser integrity/i;
+const BLOCK_TITLE_PATTERN = /just a moment|attention required|verify you are human|security check/i;
 const INVALID_CREDENTIALS_PATTERN = /invalid|incorrect|wrong password|try again|unable to sign in/i;
 
 export class CaptchaOrBlockError extends Error {
@@ -330,8 +331,18 @@ export class ProlificSessionManager {
       return true;
     }
 
+    const title = (await page.title().catch(() => "")).toLowerCase();
+    if (BLOCK_TITLE_PATTERN.test(title)) {
+      return true;
+    }
+
     const bodyText = await this.getBodyText(page);
-    return BLOCK_TEXT_PATTERN.test(bodyText);
+    if (BLOCK_TEXT_PATTERN.test(bodyText)) {
+      return true;
+    }
+
+    const htmlSnippet = (await page.content().catch(() => "")).slice(0, 8_000).toLowerCase();
+    return BLOCK_TEXT_PATTERN.test(htmlSnippet);
   }
 
   private async hasInvalidCredentialsMessage(page: Page): Promise<boolean> {
