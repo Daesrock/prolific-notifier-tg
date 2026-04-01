@@ -81,6 +81,7 @@ export class ProlificSessionManager {
   private browser: Browser | null = null;
   private context: BrowserContext | null = null;
   private page: Page | null = null;
+  private pageCrashed = false;
 
   constructor(
     private readonly config: AppConfig,
@@ -88,8 +89,21 @@ export class ProlificSessionManager {
   ) {}
 
   async start(): Promise<void> {
-    if (this.browser && this.context && this.page) {
+    const hasHealthySession =
+      this.browser &&
+      this.context &&
+      this.page &&
+      this.browser.isConnected() &&
+      !this.page.isClosed() &&
+      !this.pageCrashed;
+
+    if (hasHealthySession) {
       return;
+    }
+
+    if (this.browser || this.context || this.page) {
+      this.logger.warn("Detected stale browser/session objects. Recreating Playwright context");
+      await this.close();
     }
 
     const sessionPath = path.resolve(this.config.SESSION_STATE_PATH);
@@ -98,6 +112,7 @@ export class ProlificSessionManager {
 
     this.browser = await chromium.launch({
       headless: this.config.HEADLESS,
+      args: ["--disable-dev-shm-usage", "--no-sandbox", "--disable-setuid-sandbox", "--disable-gpu"],
     });
 
     const contextOptions: { storageState?: string } = {};
@@ -110,6 +125,14 @@ export class ProlificSessionManager {
     this.page = await this.context.newPage();
     this.page.setDefaultNavigationTimeout(60_000);
     this.page.setDefaultTimeout(20_000);
+    this.attachPageLifecycleHandlers(this.page);
+  }
+
+  private attachPageLifecycleHandlers(page: Page): void {
+    page.on("crash", () => {
+      this.pageCrashed = true;
+      this.logger.error("Playwright page crashed");
+    });
   }
 
   private hydrateSessionStateFromEnv(sessionPath: string): void {
@@ -136,15 +159,28 @@ export class ProlificSessionManager {
 
   async close(): Promise<void> {
     if (this.browser) {
-      await this.browser.close();
+      try {
+        if (this.browser.isConnected()) {
+          await this.browser.close();
+        }
+      } catch (error) {
+        this.logger.warn({ err: error }, "Error while closing browser instance");
+      }
     }
     this.browser = null;
     this.context = null;
     this.page = null;
+    this.pageCrashed = false;
+  }
+
+  async reset(reason: string): Promise<void> {
+    this.logger.warn({ reason }, "Resetting Prolific browser session");
+    await this.close();
   }
 
   async fetchStudies(): Promise<ProlificStudy[]> {
     await this.start();
+    await this.ensureFreshPage();
 
     const page = this.requirePage();
     await this.ensureAuthenticated(page);
@@ -156,6 +192,24 @@ export class ProlificSessionManager {
     }
 
     return extractStudies(page);
+  }
+
+  private async ensureFreshPage(): Promise<void> {
+    const context = this.requireContext();
+
+    if (this.page && !this.page.isClosed()) {
+      try {
+        await this.page.close();
+      } catch (error) {
+        this.logger.warn({ err: error }, "Failed to close stale page before recreating");
+      }
+    }
+
+    this.page = await context.newPage();
+    this.page.setDefaultNavigationTimeout(60_000);
+    this.page.setDefaultTimeout(20_000);
+    this.pageCrashed = false;
+    this.attachPageLifecycleHandlers(this.page);
   }
 
   private async ensureAuthenticated(page: Page): Promise<void> {

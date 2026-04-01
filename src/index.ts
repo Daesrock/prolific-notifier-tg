@@ -134,10 +134,12 @@ async function run(): Promise<void> {
         const details = `Authentication issue: ${error.message}`;
         logger.error({ error: error.message }, "Authentication failed");
         await sendThrottledAlert("authentication_issue", "Authentication issue", details);
+        await prolific.reset("authentication issue");
       } else {
         const message = error instanceof Error ? error.message : String(error);
-        logger.error({ error: message }, "Unexpected worker error");
+        logger.error({ err: error, error: message }, `Unexpected worker error: ${message}`);
         await sendThrottledAlert("unexpected_error", "Unexpected worker error", message);
+        await prolific.reset("unexpected worker error");
       }
     }
 
