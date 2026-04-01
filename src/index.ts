@@ -20,7 +20,7 @@ async function run(): Promise<void> {
   let shuttingDown = false;
   let paused = false;
   let pauseReason = "";
-  let lastAlertAt = 0;
+  const lastAlertAtByKey = new Map<string, number>();
   let lastHeartbeatAt = 0;
 
   const shutdown = async (signal: string) => {
@@ -34,7 +34,7 @@ async function run(): Promise<void> {
     try {
       await prolific.close();
     } catch (error) {
-      logger.error({ error }, "Error while closing Prolific session");
+      logger.error({ err: error }, "Error while closing Prolific session");
     }
 
     studyStore.close();
@@ -49,25 +49,28 @@ async function run(): Promise<void> {
     void shutdown("SIGTERM");
   });
 
-  const sendThrottledAlert = async (title: string, details: string) => {
+  const sendThrottledAlert = async (key: string, title: string, details: string, cooldownMs = config.ALERT_COOLDOWN_MS) => {
     const now = Date.now();
-    if (now - lastAlertAt < config.ALERT_COOLDOWN_MS) {
-      logger.warn({ title, details }, "Alert suppressed due to cooldown");
+    const lastAlertAt = lastAlertAtByKey.get(key) ?? 0;
+    if (cooldownMs > 0 && now - lastAlertAt < cooldownMs) {
+      logger.warn({ key, title, details }, "Alert suppressed due to cooldown");
       return;
     }
 
     try {
       await telegram.sendAlert(title, details);
-      lastAlertAt = now;
+      lastAlertAtByKey.set(key, now);
     } catch (error) {
-      logger.error({ error }, "Failed to send Telegram alert");
+      logger.error({ err: error, key, title }, "Failed to send Telegram alert");
     }
   };
 
   logger.info("Prolific notifier worker started");
   await sendThrottledAlert(
+    "startup",
     "Prolific notifier started",
     `Worker online. Poll interval ${Math.round(config.POLL_INTERVAL_MS / 1000)}s`,
+    0,
   );
 
   while (!shuttingDown) {
@@ -78,7 +81,7 @@ async function run(): Promise<void> {
 
       const now = Date.now();
       if (now - lastHeartbeatAt >= config.HEARTBEAT_INTERVAL_MS) {
-        await sendThrottledAlert("Worker paused", pauseReason);
+        await sendThrottledAlert("paused_heartbeat", "Worker paused", pauseReason, config.HEARTBEAT_INTERVAL_MS);
         lastHeartbeatAt = now;
       }
 
@@ -111,15 +114,15 @@ async function run(): Promise<void> {
         paused = true;
         pauseReason = `${error.message}. Manual intervention required before restart.`;
         logger.error({ error: error.message }, "Captcha/block detected. Entering pause mode");
-        await sendThrottledAlert("Captcha or block detected", pauseReason);
+        await sendThrottledAlert("captcha_block", "Captcha or block detected", pauseReason);
       } else if (error instanceof AuthenticationError) {
         const details = `Authentication issue: ${error.message}`;
         logger.error({ error: error.message }, "Authentication failed");
-        await sendThrottledAlert("Authentication issue", details);
+        await sendThrottledAlert("authentication_issue", "Authentication issue", details);
       } else {
         const message = error instanceof Error ? error.message : String(error);
         logger.error({ error: message }, "Unexpected worker error");
-        await sendThrottledAlert("Unexpected worker error", message);
+        await sendThrottledAlert("unexpected_error", "Unexpected worker error", message);
       }
     }
 

@@ -27,7 +27,9 @@ const SUBMIT_SELECTORS = [
   "button:has-text('Continue')",
 ];
 
-const CAPTCHA_TEXT_PATTERN = /captcha|verify you are human|human verification|security check|challenge/i;
+const BLOCK_TEXT_PATTERN =
+  /captcha|verify you are human|human verification|security check|challenge|checking your browser|just a moment|cloudflare|attention required/i;
+const INVALID_CREDENTIALS_PATTERN = /invalid|incorrect|wrong password|try again|unable to sign in/i;
 
 export class CaptchaOrBlockError extends Error {
   constructor(message: string) {
@@ -115,6 +117,7 @@ export class ProlificSessionManager {
     this.logger.warn("Session is logged out. Attempting re-login");
 
     let attempt = 0;
+    let lastErrorMessage = "unknown";
     while (attempt < this.config.MAX_AUTH_RETRIES) {
       attempt += 1;
 
@@ -128,16 +131,10 @@ export class ProlificSessionManager {
           throw error;
         }
 
+        lastErrorMessage = error instanceof Error ? error.message : String(error);
+
         const delayMs = attempt * 2_000;
-        this.logger.warn(
-          {
-            attempt,
-            maxRetries: this.config.MAX_AUTH_RETRIES,
-            delayMs,
-            error: error instanceof Error ? error.message : String(error),
-          },
-          "Re-login attempt failed",
-        );
+        this.logger.warn({ attempt, maxRetries: this.config.MAX_AUTH_RETRIES, delayMs }, `Re-login attempt failed: ${lastErrorMessage}`);
 
         if (attempt >= this.config.MAX_AUTH_RETRIES) {
           break;
@@ -147,7 +144,7 @@ export class ProlificSessionManager {
       }
     }
 
-    throw new AuthenticationError("Unable to re-login after max retries");
+    throw new AuthenticationError(`Unable to re-login after max retries. Last error: ${lastErrorMessage}`);
   }
 
   private async login(page: Page): Promise<void> {
@@ -161,12 +158,12 @@ export class ProlificSessionManager {
     const passwordFilled = await this.fillFirstMatch(page, PASSWORD_SELECTORS, this.config.PROLIFIC_PASSWORD);
 
     if (!emailFilled || !passwordFilled) {
-      throw new AuthenticationError("Unable to find email/password fields on login page");
+      throw new AuthenticationError(`Unable to find email/password fields on login page (${page.url()})`);
     }
 
     const clicked = await this.clickFirstMatch(page, SUBMIT_SELECTORS);
     if (!clicked) {
-      throw new AuthenticationError("Unable to find login submit button");
+      throw new AuthenticationError(`Unable to find login submit button (${page.url()})`);
     }
 
     await page.waitForLoadState("domcontentloaded");
@@ -174,6 +171,10 @@ export class ProlificSessionManager {
 
     if (await this.isBlockedByCaptcha(page)) {
       throw new CaptchaOrBlockError("Captcha or security challenge appeared after login submit");
+    }
+
+    if (await this.hasInvalidCredentialsMessage(page)) {
+      throw new AuthenticationError("Prolific rejected credentials (invalid email/password or login denied)");
     }
 
     await page.goto(this.config.PROLIFIC_STUDIES_URL, { waitUntil: "domcontentloaded" });
@@ -235,12 +236,29 @@ export class ProlificSessionManager {
 
   private async isBlockedByCaptcha(page: Page): Promise<boolean> {
     const url = page.url().toLowerCase();
-    if (url.includes("captcha") || url.includes("challenge")) {
+    if (url.includes("captcha") || url.includes("challenge") || url.includes("cloudflare")) {
       return true;
     }
 
-    const bodyText = (await page.locator("body").innerText()).slice(0, 8_000);
-    return CAPTCHA_TEXT_PATTERN.test(bodyText);
+    const bodyText = await this.getBodyText(page);
+    return BLOCK_TEXT_PATTERN.test(bodyText);
+  }
+
+  private async hasInvalidCredentialsMessage(page: Page): Promise<boolean> {
+    const bodyText = await this.getBodyText(page);
+    return INVALID_CREDENTIALS_PATTERN.test(bodyText);
+  }
+
+  private async getBodyText(page: Page): Promise<string> {
+    try {
+      const body = page.locator("body").first();
+      if ((await body.count()) === 0) {
+        return "";
+      }
+      return (await body.innerText({ timeout: 2_000 })).slice(0, 12_000).toLowerCase();
+    } catch {
+      return "";
+    }
   }
 
   private requirePage(): Page {

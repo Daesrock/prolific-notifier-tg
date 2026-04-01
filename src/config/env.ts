@@ -1,7 +1,7 @@
 import dotenv from "dotenv";
 import { z } from "zod";
 
-dotenv.config();
+dotenv.config({ quiet: true });
 
 const EnvSchema = z.object({
   PROLIFIC_EMAIL: z.string().email(),
