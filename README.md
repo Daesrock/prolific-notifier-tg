@@ -83,8 +83,8 @@ npm run manual-session
 
 4. A real browser opens. Complete login manually and solve any captcha/challenge.
 5. Return to terminal and press Enter.
-6. The script saves SESSION_STATE_PATH and prints SESSION_STATE_BASE64.
-7. Copy that base64 string into Railway Variables as SESSION_STATE_BASE64.
+6. The script saves SESSION_STATE_PATH and prints SESSION_STATE_GZIP_BASE64.
+7. Copy that value into Railway Variables as SESSION_STATE_GZIP_BASE64.
 8. Redeploy or restart service in Railway.
 
-At startup, the service hydrates the session file from SESSION_STATE_BASE64 before creating the browser context.
+At startup, the service hydrates the session file from SESSION_STATE_GZIP_BASE64 (or SESSION_STATE_BASE64 as fallback) before creating the browser context.

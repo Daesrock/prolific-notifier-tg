@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
+import { gzipSync } from "node:zlib";
 import dotenv from "dotenv";
 import { chromium } from "playwright";
 
@@ -41,10 +42,13 @@ async function run(): Promise<void> {
 
   const sessionJson = fs.readFileSync(sessionPath, "utf8");
   const sessionBase64 = Buffer.from(sessionJson, "utf8").toString("base64");
+  const sessionGzipBase64 = gzipSync(Buffer.from(sessionJson, "utf8")).toString("base64");
 
   console.log("Session file saved:", sessionPath);
-  console.log("Use this value in Railway variable SESSION_STATE_BASE64:");
-  console.log(sessionBase64);
+  console.log(`SESSION_STATE_BASE64 length: ${sessionBase64.length}`);
+  console.log(`SESSION_STATE_GZIP_BASE64 length: ${sessionGzipBase64.length}`);
+  console.log("Use this value in Railway variable SESSION_STATE_GZIP_BASE64:");
+  console.log(sessionGzipBase64);
 }
 
 run().catch((error) => {

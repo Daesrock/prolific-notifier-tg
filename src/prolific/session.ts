@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { gunzipSync } from "node:zlib";
 import pino from "pino";
 import { Browser, BrowserContext, Frame, Page, chromium } from "playwright";
 import { AppConfig } from "../config/env";
@@ -112,18 +113,24 @@ export class ProlificSessionManager {
   }
 
   private hydrateSessionStateFromEnv(sessionPath: string): void {
-    const sessionBase64 = this.config.SESSION_STATE_BASE64?.trim();
-    if (!sessionBase64) {
+    const compressedSessionBase64 = this.config.SESSION_STATE_GZIP_BASE64?.trim();
+    const plainSessionBase64 = this.config.SESSION_STATE_BASE64?.trim();
+    if (!compressedSessionBase64 && !plainSessionBase64) {
       return;
     }
 
     try {
-      const decoded = Buffer.from(sessionBase64, "base64").toString("utf8");
+      const decoded = compressedSessionBase64
+        ? gunzipSync(Buffer.from(compressedSessionBase64, "base64")).toString("utf8")
+        : Buffer.from(plainSessionBase64 as string, "base64").toString("utf8");
       JSON.parse(decoded);
       fs.writeFileSync(sessionPath, decoded, "utf8");
-      this.logger.info({ sessionPath }, "Session state file hydrated from SESSION_STATE_BASE64");
+      this.logger.info(
+        { sessionPath, source: compressedSessionBase64 ? "SESSION_STATE_GZIP_BASE64" : "SESSION_STATE_BASE64" },
+        "Session state file hydrated from environment variable",
+      );
     } catch (error) {
-      this.logger.warn({ error }, "Failed to hydrate session state from SESSION_STATE_BASE64");
+      this.logger.warn({ error }, "Failed to hydrate session state from environment variable");
     }
   }
 
