@@ -93,6 +93,7 @@ export class ProlificSessionManager {
 
     const sessionPath = path.resolve(this.config.SESSION_STATE_PATH);
     fs.mkdirSync(path.dirname(sessionPath), { recursive: true });
+    this.hydrateSessionStateFromEnv(sessionPath);
 
     this.browser = await chromium.launch({
       headless: this.config.HEADLESS,
@@ -108,6 +109,22 @@ export class ProlificSessionManager {
     this.page = await this.context.newPage();
     this.page.setDefaultNavigationTimeout(60_000);
     this.page.setDefaultTimeout(20_000);
+  }
+
+  private hydrateSessionStateFromEnv(sessionPath: string): void {
+    const sessionBase64 = this.config.SESSION_STATE_BASE64?.trim();
+    if (!sessionBase64) {
+      return;
+    }
+
+    try {
+      const decoded = Buffer.from(sessionBase64, "base64").toString("utf8");
+      JSON.parse(decoded);
+      fs.writeFileSync(sessionPath, decoded, "utf8");
+      this.logger.info({ sessionPath }, "Session state file hydrated from SESSION_STATE_BASE64");
+    } catch (error) {
+      this.logger.warn({ error }, "Failed to hydrate session state from SESSION_STATE_BASE64");
+    }
   }
 
   async close(): Promise<void> {

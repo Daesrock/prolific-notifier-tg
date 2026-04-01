@@ -11,6 +11,7 @@ const EnvSchema = z.object({
   POLL_INTERVAL_MS: z.coerce.number().int().min(60_000).default(300_000),
   DATABASE_PATH: z.string().default("./data/prolific.db"),
   SESSION_STATE_PATH: z.string().default("./data/prolific-session.json"),
+  SESSION_STATE_BASE64: z.string().optional(),
   PROLIFIC_LOGIN_URL: z.string().url().default("https://app.prolific.com/login"),
   PROLIFIC_STUDIES_URL: z.string().url().default("https://app.prolific.com/studies"),
   HEADLESS: z

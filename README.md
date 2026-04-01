@@ -68,3 +68,23 @@ Recommended persistent paths:
 - If captcha/challenge is detected, worker pauses and sends Telegram alert.
 - Manual intervention is required, then restart the service.
 - Prolific UI selectors can change over time; adjust parser selectors if needed.
+
+## Manual Intervention (When Worker Is Paused)
+
+Railway cannot show an interactive browser window, so manual login must be done locally.
+
+1. Pull the latest code locally.
+2. Set your local .env with PROLIFIC_EMAIL and PROLIFIC_PASSWORD.
+3. Run the manual bootstrap command:
+
+```bash
+npm run manual-session
+```
+
+4. A real browser opens. Complete login manually and solve any captcha/challenge.
+5. Return to terminal and press Enter.
+6. The script saves SESSION_STATE_PATH and prints SESSION_STATE_BASE64.
+7. Copy that base64 string into Railway Variables as SESSION_STATE_BASE64.
+8. Redeploy or restart service in Railway.
+
+At startup, the service hydrates the session file from SESSION_STATE_BASE64 before creating the browser context.
