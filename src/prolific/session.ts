@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import pino from "pino";
-import { Browser, BrowserContext, Page, chromium } from "playwright";
+import { Browser, BrowserContext, Frame, Page, chromium } from "playwright";
 import { AppConfig } from "../config/env";
 import { ProlificStudy } from "../types/study";
 import { extractStudies } from "./studies";
@@ -48,8 +48,17 @@ const SUBMIT_SELECTORS = [
   "button:has-text('Next')",
 ];
 
+const PRE_LOGIN_CONTINUE_SELECTORS = [
+  "a[href*='auth.prolific.com']",
+  "a[href*='/u/login']",
+  "button:has-text('Log in')",
+  "a:has-text('Log in')",
+  "button:has-text('Continue')",
+  "a:has-text('Continue')",
+];
+
 const BLOCK_TEXT_PATTERN =
-  /captcha|verify you are human|human verification|security check|challenge|checking your browser|just a moment|cloudflare|attention required/i;
+  /captcha|verify you are human|human verification|security check|challenge|checking your browser|just a moment|cloudflare|attention required|enable javascript and cookies|access denied|browser integrity/i;
 const INVALID_CREDENTIALS_PATTERN = /invalid|incorrect|wrong password|try again|unable to sign in/i;
 
 export class CaptchaOrBlockError extends Error {
@@ -170,14 +179,23 @@ export class ProlificSessionManager {
 
   private async login(page: Page): Promise<void> {
     await page.goto(this.config.PROLIFIC_LOGIN_URL, { waitUntil: "domcontentloaded" });
+    await page.waitForTimeout(1_500);
+    await page.waitForLoadState("networkidle").catch(() => undefined);
 
     if (await this.isBlockedByCaptcha(page)) {
       throw new CaptchaOrBlockError("Captcha or security challenge detected on login page");
     }
 
+    if (!(await this.hasAnySelector(page, [...EMAIL_SELECTORS, ...PASSWORD_SELECTORS]))) {
+      await this.clickFirstMatch(page, PRE_LOGIN_CONTINUE_SELECTORS);
+      await page.waitForLoadState("domcontentloaded");
+      await page.waitForTimeout(1_500);
+    }
+
     const emailFilled = await this.fillFirstMatch(page, EMAIL_SELECTORS, this.config.PROLIFIC_EMAIL);
     if (!emailFilled) {
-      throw new AuthenticationError(`Unable to find email/username field on login page (${page.url()})`);
+      const pageSummary = await this.getPageSummary(page);
+      throw new AuthenticationError(`Unable to find email/username field on login page (${page.url()}). ${pageSummary}`);
     }
 
     if (!(await this.hasAnySelector(page, PASSWORD_SELECTORS))) {
@@ -196,7 +214,8 @@ export class ProlificSessionManager {
 
     const passwordFilled = await this.fillFirstMatch(page, PASSWORD_SELECTORS, this.config.PROLIFIC_PASSWORD);
     if (!passwordFilled) {
-      throw new AuthenticationError(`Unable to find password field on login flow (${page.url()})`);
+      const pageSummary = await this.getPageSummary(page);
+      throw new AuthenticationError(`Unable to find password field on login flow (${page.url()}). ${pageSummary}`);
     }
 
     const clicked = await this.clickFirstMatch(page, SUBMIT_SELECTORS);
@@ -233,36 +252,49 @@ export class ProlificSessionManager {
   }
 
   private async fillFirstMatch(page: Page, selectors: string[], value: string): Promise<boolean> {
-    for (const selector of selectors) {
-      const locator = page.locator(selector).first();
-      if ((await locator.count()) === 0) {
-        continue;
+    for (const root of this.getSearchRoots(page)) {
+      for (const selector of selectors) {
+        const locator = root.locator(selector).first();
+        if ((await locator.count()) === 0) {
+          continue;
+        }
+        await locator.fill(value);
+        return true;
       }
-      await locator.fill(value);
-      return true;
     }
     return false;
   }
 
   private async clickFirstMatch(page: Page, selectors: string[]): Promise<boolean> {
-    for (const selector of selectors) {
-      const locator = page.locator(selector).first();
-      if ((await locator.count()) === 0) {
-        continue;
+    for (const root of this.getSearchRoots(page)) {
+      for (const selector of selectors) {
+        const locator = root.locator(selector).first();
+        if ((await locator.count()) === 0) {
+          continue;
+        }
+        await locator.click();
+        return true;
       }
-      await locator.click();
-      return true;
     }
     return false;
   }
 
   private async hasAnySelector(page: Page, selectors: string[]): Promise<boolean> {
-    for (const selector of selectors) {
-      if ((await page.locator(selector).count()) > 0) {
-        return true;
+    for (const root of this.getSearchRoots(page)) {
+      for (const selector of selectors) {
+        if ((await root.locator(selector).count()) > 0) {
+          return true;
+        }
       }
     }
     return false;
+  }
+
+  private getSearchRoots(page: Page): Array<Page | Frame> {
+    const frameRoots = page
+      .frames()
+      .filter((frame) => frame !== page.mainFrame());
+    return [page, ...frameRoots];
   }
 
   private async isLoggedOut(page: Page): Promise<boolean> {
@@ -317,6 +349,13 @@ export class ProlificSessionManager {
     } catch {
       return "";
     }
+  }
+
+  private async getPageSummary(page: Page): Promise<string> {
+    const title = (await page.title().catch(() => "")).trim();
+    const body = await this.getBodyText(page);
+    const bodyPreview = body.replace(/\s+/g, " ").slice(0, 220);
+    return `title=${title || "n/a"}; bodyPreview=${bodyPreview || "n/a"}`;
   }
 
   private requirePage(): Page {
