@@ -8,9 +8,13 @@ import { extractStudies } from "./studies";
 
 const EMAIL_SELECTORS = [
   "input[type='email']",
+  "input[name='username']",
+  "input[name='identifier']",
   "input[name='email']",
+  "input[id*='username']",
   "input[id*='email']",
   "input[autocomplete='username']",
+  "input[type='text']",
 ];
 
 const PASSWORD_SELECTORS = [
@@ -22,9 +26,12 @@ const PASSWORD_SELECTORS = [
 
 const SUBMIT_SELECTORS = [
   "button[type='submit']",
+  "button[name='action']",
+  "input[type='submit']",
   "button:has-text('Log in')",
   "button:has-text('Sign in')",
   "button:has-text('Continue')",
+  "button:has-text('Next')",
 ];
 
 const BLOCK_TEXT_PATTERN =
@@ -155,10 +162,27 @@ export class ProlificSessionManager {
     }
 
     const emailFilled = await this.fillFirstMatch(page, EMAIL_SELECTORS, this.config.PROLIFIC_EMAIL);
-    const passwordFilled = await this.fillFirstMatch(page, PASSWORD_SELECTORS, this.config.PROLIFIC_PASSWORD);
+    if (!emailFilled) {
+      throw new AuthenticationError(`Unable to find email/username field on login page (${page.url()})`);
+    }
 
-    if (!emailFilled || !passwordFilled) {
-      throw new AuthenticationError(`Unable to find email/password fields on login page (${page.url()})`);
+    if (!(await this.hasAnySelector(page, PASSWORD_SELECTORS))) {
+      const continueClicked = await this.clickFirstMatch(page, SUBMIT_SELECTORS);
+      if (!continueClicked) {
+        throw new AuthenticationError(`Unable to continue from identifier step (${page.url()})`);
+      }
+
+      await page.waitForLoadState("domcontentloaded");
+      await page.waitForTimeout(1_500);
+
+      if (await this.isBlockedByCaptcha(page)) {
+        throw new CaptchaOrBlockError("Captcha or security challenge appeared after identifier submit");
+      }
+    }
+
+    const passwordFilled = await this.fillFirstMatch(page, PASSWORD_SELECTORS, this.config.PROLIFIC_PASSWORD);
+    if (!passwordFilled) {
+      throw new AuthenticationError(`Unable to find password field on login flow (${page.url()})`);
     }
 
     const clicked = await this.clickFirstMatch(page, SUBMIT_SELECTORS);
@@ -218,6 +242,15 @@ export class ProlificSessionManager {
     return false;
   }
 
+  private async hasAnySelector(page: Page, selectors: string[]): Promise<boolean> {
+    for (const selector of selectors) {
+      if ((await page.locator(selector).count()) > 0) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   private async isLoggedOut(page: Page): Promise<boolean> {
     const url = page.url().toLowerCase();
     if (url.includes("/login")) {
@@ -236,7 +269,7 @@ export class ProlificSessionManager {
 
   private async isBlockedByCaptcha(page: Page): Promise<boolean> {
     const url = page.url().toLowerCase();
-    if (url.includes("captcha") || url.includes("challenge") || url.includes("cloudflare")) {
+    if (url.includes("captcha") || url.includes("challenge") || url.includes("cloudflare") || url.includes("__cf_chl")) {
       return true;
     }
 
