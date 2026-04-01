@@ -2,10 +2,13 @@
 
 Monitors Prolific studies every 5 minutes and sends new-study alerts to a Telegram chat.
 
+You can run with a fixed interval or a random range.
+
 ## Features
 
 - Login and automatic re-login using Prolific credentials from environment variables.
 - Polling loop every 5 minutes (configurable).
+- Optional random polling range using POLL_INTERVAL_MIN_MS and POLL_INTERVAL_MAX_MS.
 - Detects new studies and sends Telegram notifications with study details.
 - Stores already-notified study IDs in SQLite to avoid duplicates after restarts.
 - Detects captcha/security challenge and enters safe pause mode.
@@ -48,6 +51,17 @@ For development:
 ```bash
 npm run dev
 ```
+
+### Random Poll Interval Example
+
+Use this when you want checks between 6 and 9 minutes:
+
+```dotenv
+POLL_INTERVAL_MIN_MS=360000
+POLL_INTERVAL_MAX_MS=540000
+```
+
+If both are set, they override POLL_INTERVAL_MS.
 
 ## Railway Deployment
 

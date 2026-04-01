@@ -9,6 +9,16 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function pickPollIntervalMs(config: ReturnType<typeof loadConfig>): number {
+  if (config.POLL_INTERVAL_MIN_MS !== undefined && config.POLL_INTERVAL_MAX_MS !== undefined) {
+    const min = config.POLL_INTERVAL_MIN_MS;
+    const max = config.POLL_INTERVAL_MAX_MS;
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+  }
+
+  return config.POLL_INTERVAL_MS;
+}
+
 async function run(): Promise<void> {
   const config = loadConfig();
   const logger = createLogger(config.LOG_LEVEL);
@@ -66,15 +76,20 @@ async function run(): Promise<void> {
   };
 
   logger.info("Prolific notifier worker started");
+  const pollModeText =
+    config.POLL_INTERVAL_MIN_MS !== undefined && config.POLL_INTERVAL_MAX_MS !== undefined
+      ? `Worker online. Poll interval random between ${Math.round(config.POLL_INTERVAL_MIN_MS / 1000)}s and ${Math.round(config.POLL_INTERVAL_MAX_MS / 1000)}s`
+      : `Worker online. Poll interval ${Math.round(config.POLL_INTERVAL_MS / 1000)}s`;
   await sendThrottledAlert(
     "startup",
     "Prolific notifier started",
-    `Worker online. Poll interval ${Math.round(config.POLL_INTERVAL_MS / 1000)}s`,
+    pollModeText,
     0,
   );
 
   while (!shuttingDown) {
     const loopStartedAt = Date.now();
+    const targetIntervalMs = pickPollIntervalMs(config);
 
     if (paused) {
       logger.warn({ reason: pauseReason }, "Worker is paused due to captcha/block");
@@ -85,7 +100,7 @@ async function run(): Promise<void> {
         lastHeartbeatAt = now;
       }
 
-      await sleep(config.POLL_INTERVAL_MS);
+      await sleep(targetIntervalMs);
       continue;
     }
 
@@ -127,7 +142,7 @@ async function run(): Promise<void> {
     }
 
     const elapsed = Date.now() - loopStartedAt;
-    const sleepMs = Math.max(config.POLL_INTERVAL_MS - elapsed, 1_000);
+    const sleepMs = Math.max(targetIntervalMs - elapsed, 1_000);
     await sleep(sleepMs);
   }
 }
