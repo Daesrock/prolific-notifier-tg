@@ -191,7 +191,53 @@ export class ProlificSessionManager {
       throw new CaptchaOrBlockError("Captcha or security challenge detected on studies page");
     }
 
-    return extractStudies(page);
+    return this.extractStudiesWithRetry(page);
+  }
+
+  private async extractStudiesWithRetry(page: Page): Promise<ProlificStudy[]> {
+    const maxAttempts = 3;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        return await extractStudies(page);
+      } catch (error) {
+        if (!this.isExecutionContextDestroyedError(error) || attempt >= maxAttempts) {
+          throw error;
+        }
+
+        this.logger.warn(
+          { attempt, maxAttempts, err: error },
+          "Study extraction interrupted by navigation/context reset. Retrying",
+        );
+
+        await this.waitForPageStability(page);
+
+        if (await this.isBlockedByCaptcha(page)) {
+          throw new CaptchaOrBlockError("Captcha or security challenge detected while extracting studies");
+        }
+
+        if (page.url() !== this.config.PROLIFIC_STUDIES_URL) {
+          await page.goto(this.config.PROLIFIC_STUDIES_URL, { waitUntil: "domcontentloaded" });
+        }
+      }
+    }
+
+    return [];
+  }
+
+  private isExecutionContextDestroyedError(error: unknown): boolean {
+    const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+    return (
+      message.includes("execution context was destroyed") ||
+      message.includes("cannot find context with specified id") ||
+      message.includes("most likely because of a navigation")
+    );
+  }
+
+  private async waitForPageStability(page: Page): Promise<void> {
+    await page.waitForLoadState("domcontentloaded").catch(() => undefined);
+    await page.waitForLoadState("networkidle", { timeout: 5_000 }).catch(() => undefined);
+    await page.waitForTimeout(500);
   }
 
   private async ensureFreshPage(): Promise<void> {
